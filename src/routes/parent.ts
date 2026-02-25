@@ -1,50 +1,49 @@
 /**
- * Parent API Routes — aligned with actual Supabase DB schema
- *
- * DB fields:
- *  Student:       id, admissionNumber, full_name, grade_level, cardUid, walletBalance, createdAt
- *  Attendance:    id, studentId, checkType (String), deviceId (String), createdAt
- *  FeeTransaction:id, studentId, amount, type (String), description, createdAt
- *  Assignment:    id, teacherId, title, description, grade_level, dueDate, status, createdAt
- *  NO Grade model in DB → removed
+ * Parent API Routes — aligned with MongoDB Prisma schema
  */
 
-import { Router, Response } from 'express';
-import { z } from 'zod';
-import prisma from '../config/database';
-import { authenticateJWT, AuthenticatedRequest } from '../middleware/auth';
-import { verifyParentOwnership } from '../middleware/rbac';
-import { validateParams, validateQuery } from '../middleware/validation';
+import { Router, Response } from "express";
+import { z } from "zod";
+import prisma from "../config/database";
+import { authenticateJWT, AuthenticatedRequest } from "../middleware/auth";
+import { verifyParentOwnership } from "../middleware/rbac";
+import { validateParams, validateQuery } from "../middleware/validation";
 
 const router = Router();
 router.use(authenticateJWT);
 
 /**
  * GET /parent/students
- * Get all children linked to the authenticated parent
  */
-router.get('/students', async (req: AuthenticatedRequest, res: Response) => {
+router.get("/students", async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    if (!req.user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
 
-    const parent = await prisma.parent.findFirst({ where: { userId: req.user.id } });
+    const parent = await prisma.parent.findFirst({
+      where: { user_id: req.user.id },
+    });
     if (!parent) {
-      res.status(403).json({ error: 'Forbidden', message: 'User is not a parent' });
+      res
+        .status(403)
+        .json({ error: "Forbidden", message: "User is not a parent" });
       return;
     }
 
     const parentStudentMaps = await prisma.parentStudentMap.findMany({
-      where: { parentId: parent.id },
+      where: { parent_id: parent.id },
       include: {
         student: {
           select: {
             id: true,
-            admissionNumber: true,
+            admission_number: true,
             full_name: true,
             grade_level: true,
-            cardUid: true,
-            walletBalance: true,
-            createdAt: true,
+            card_uid: true,
+            wallet_balance: true,
+            created_at: true,
           },
         },
       },
@@ -53,62 +52,89 @@ router.get('/students', async (req: AuthenticatedRequest, res: Response) => {
     res.json({
       success: true,
       count: parentStudentMaps.length,
-      students: parentStudentMaps.map(psm => ({
+      students: parentStudentMaps.map((psm) => ({
         id: psm.student.id,
-        admission_number: psm.student.admissionNumber,
+        admission_number: psm.student.admission_number,
         full_name: psm.student.full_name,
         grade_level: psm.student.grade_level,
-        card_uid: psm.student.cardUid,
-        wallet_balance: Number(psm.student.walletBalance ?? 0),
+        card_uid: psm.student.card_uid,
+        wallet_balance: Number(psm.student.wallet_balance ?? 0),
         relationship: psm.relationship,
-        created_at: psm.student.createdAt,
+        created_at: psm.student.created_at,
       })),
     });
   } catch (error) {
-    console.error('[Parent] Error fetching students:', error);
-    res.status(500).json({ error: 'Internal server error', message: 'Failed to fetch students' });
+    console.error("[Parent] Error fetching students:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to fetch students",
+    });
   }
 });
 
 /**
  * GET /parent/attendance/:studentId
- * Get attendance records for a student (ownership verified)
  */
-const studentParamSchema = z.object({ studentId: z.string().uuid() });
+const studentParamSchema = z.object({ studentId: z.string() });
 
 const attendanceQuerySchema = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
-  limit: z.string().regex(/^\d+$/).optional().transform(v => v ? parseInt(v, 10) : 100),
+  limit: z
+    .string()
+    .regex(/^\d+$/)
+    .optional()
+    .transform((v) => (v ? parseInt(v, 10) : 100)),
 });
 
-router.get('/attendance/:studentId',
+router.get(
+  "/attendance/:studentId",
   validateParams(studentParamSchema),
   validateQuery(attendanceQuerySchema),
   verifyParentOwnership,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { studentId } = req.params;
-      const { startDate, endDate, limit = 100 } = req.query as unknown as { startDate?: string; endDate?: string; limit: number };
+      const {
+        startDate,
+        endDate,
+        limit = 100,
+      } = req.query as unknown as {
+        startDate?: string;
+        endDate?: string;
+        limit: number;
+      };
 
       let dateFilter: { gte?: Date; lte?: Date } = {};
 
-      if (startDate) { const s = new Date(startDate); s.setHours(0, 0, 0, 0); dateFilter.gte = s; }
-      if (endDate) { const e = new Date(endDate); e.setHours(23, 59, 59, 999); dateFilter.lte = e; }
+      if (startDate) {
+        const s = new Date(startDate);
+        s.setHours(0, 0, 0, 0);
+        dateFilter.gte = s;
+      }
+      if (endDate) {
+        const e = new Date(endDate);
+        e.setHours(23, 59, 59, 999);
+        dateFilter.lte = e;
+      }
 
       if (!startDate && !endDate) {
-        const e = new Date(); e.setHours(23, 59, 59, 999);
-        const s = new Date(e); s.setDate(s.getDate() - 30); s.setHours(0, 0, 0, 0);
+        const e = new Date();
+        e.setHours(23, 59, 59, 999);
+        const s = new Date(e);
+        s.setDate(s.getDate() - 30);
+        s.setHours(0, 0, 0, 0);
         dateFilter = { gte: s, lte: e };
       }
 
-      // Attendance uses createdAt as its timestamp
       const attendance = await prisma.attendance.findMany({
         where: {
-          studentId,
-          ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {}),
+          student_id: studentId,
+          ...(Object.keys(dateFilter).length > 0
+            ? { created_at: dateFilter }
+            : {}),
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { created_at: "desc" },
         take: limit,
       });
 
@@ -116,25 +142,28 @@ router.get('/attendance/:studentId',
         success: true,
         student_id: studentId,
         count: attendance.length,
-        attendance: attendance.map(a => ({
+        attendance: attendance.map((a) => ({
           id: a.id,
-          check_type: a.checkType,
-          device_id: a.deviceId,
-          timestamp: a.createdAt,
+          check_type: a.check_type,
+          device_id: a.device_id,
+          timestamp: a.created_at,
         })),
       });
     } catch (error) {
-      console.error('[Parent] Error fetching attendance:', error);
-      res.status(500).json({ error: 'Internal server error', message: 'Failed to fetch attendance' });
+      console.error("[Parent] Error fetching attendance:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to fetch attendance",
+      });
     }
-  }
+  },
 );
 
 /**
  * GET /parent/financial/:studentId
- * Get wallet balance and recent transactions (ownership verified)
  */
-router.get('/financial/:studentId',
+router.get(
+  "/financial/:studentId",
   validateParams(studentParamSchema),
   verifyParentOwnership,
   async (req: AuthenticatedRequest, res: Response) => {
@@ -144,17 +173,24 @@ router.get('/financial/:studentId',
       const [student, recentTransactions] = await Promise.all([
         prisma.student.findUnique({
           where: { id: studentId },
-          select: { id: true, admissionNumber: true, full_name: true, walletBalance: true },
+          select: {
+            id: true,
+            admission_number: true,
+            full_name: true,
+            wallet_balance: true,
+          },
         }),
         prisma.feeTransaction.findMany({
-          where: { studentId },
-          orderBy: { createdAt: 'desc' },
+          where: { student_id: studentId },
+          orderBy: { created_at: "desc" },
           take: 20,
         }),
       ]);
 
       if (!student) {
-        res.status(404).json({ error: 'Not found', message: 'Student not found' });
+        res
+          .status(404)
+          .json({ error: "Not found", message: "Student not found" });
         return;
       }
 
@@ -162,55 +198,59 @@ router.get('/financial/:studentId',
         success: true,
         student: {
           id: student.id,
-          admission_number: student.admissionNumber,
+          admission_number: student.admission_number,
           full_name: student.full_name,
-          wallet_balance: Number(student.walletBalance ?? 0),
+          wallet_balance: Number(student.wallet_balance ?? 0),
         },
-        recent_transactions: recentTransactions.map(t => ({
+        recent_transactions: recentTransactions.map((t) => ({
           id: t.id,
           type: t.type,
           amount: Number(t.amount),
           description: t.description,
-          created_at: t.createdAt,
+          created_at: t.created_at,
         })),
       });
     } catch (error) {
-      console.error('[Parent] Error fetching financial data:', error);
-      res.status(500).json({ error: 'Internal server error', message: 'Failed to fetch financial data' });
+      console.error("[Parent] Error fetching financial data:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to fetch financial data",
+      });
     }
-  }
+  },
 );
 
 /**
  * GET /parent/assignments/:studentId
- * Get assignments visible to this student's parent
- * Note: Assignment has no studentId in DB → fetched by grade_level match
  */
-router.get('/assignments/:studentId',
+router.get(
+  "/assignments/:studentId",
   validateParams(studentParamSchema),
   verifyParentOwnership,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { studentId } = req.params;
 
-      // Get student to know grade_level
       const student = await prisma.student.findUnique({
         where: { id: studentId },
-        select: { grade_level: true, admissionNumber: true },
+        select: { grade_level: true, admission_number: true },
       });
 
       if (!student) {
-        res.status(404).json({ error: 'Not found', message: 'Student not found' });
+        res
+          .status(404)
+          .json({ error: "Not found", message: "Student not found" });
         return;
       }
 
-      // Assignments are linked by grade_level (no studentId FK in DB)
       const assignments = await prisma.assignment.findMany({
-        where: { grade_level: student.grade_level, status: 'active' },
+        where: { grade_level: student.grade_level, status: "active" },
         include: {
-          teacher: { select: { id: true, full_name: true, subject_specialty: true } },
+          teacher: {
+            select: { id: true, full_name: true, subject_specialty: true },
+          },
         },
-        orderBy: { dueDate: 'asc' },
+        orderBy: { due_date: "asc" },
       });
 
       res.json({
@@ -218,66 +258,81 @@ router.get('/assignments/:studentId',
         student_id: studentId,
         grade_level: student.grade_level,
         count: assignments.length,
-        assignments: assignments.map(a => ({
+        assignments: assignments.map((a) => ({
           id: a.id,
           title: a.title,
           description: a.description,
           grade_level: a.grade_level,
-          due_date: a.dueDate,
+          due_date: a.due_date,
           status: a.status,
           teacher_name: a.teacher?.full_name,
           teacher_subject: a.teacher?.subject_specialty,
-          created_at: a.createdAt,
+          created_at: a.created_at,
         })),
       });
     } catch (error) {
-      console.error('[Parent] Error fetching assignments:', error);
-      res.status(500).json({ error: 'Internal server error', message: 'Failed to fetch assignments' });
+      console.error("[Parent] Error fetching assignments:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to fetch assignments",
+      });
     }
-  }
+  },
 );
 
 /**
- * GET /parent/appointments/:studentId
- * Get appointments for the parent (no studentId in Appointment model, filter by parentId)
+ * GET /parent/appointments
  */
-router.get('/appointments',
+router.get(
+  "/appointments",
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
 
-      const parent = await prisma.parent.findFirst({ where: { userId: req.user.id } });
+      const parent = await prisma.parent.findFirst({
+        where: { user_id: req.user.id },
+      });
       if (!parent) {
-        res.status(403).json({ error: 'Forbidden', message: 'User is not a parent' });
+        res
+          .status(403)
+          .json({ error: "Forbidden", message: "User is not a parent" });
         return;
       }
 
       const appointments = await prisma.appointment.findMany({
-        where: { parentId: parent.id },
+        where: { parent_id: parent.id },
         include: {
-          teacher: { select: { id: true, full_name: true, subject_specialty: true } },
+          teacher: {
+            select: { id: true, full_name: true, subject_specialty: true },
+          },
         },
-        orderBy: { scheduledAt: 'asc' },
+        orderBy: { scheduled_at: "asc" },
       });
 
       res.json({
         success: true,
         count: appointments.length,
-        appointments: appointments.map(a => ({
+        appointments: appointments.map((a) => ({
           id: a.id,
           teacher_name: a.teacher?.full_name,
           teacher_subject: a.teacher?.subject_specialty,
-          scheduled_at: a.scheduledAt,
+          scheduled_at: a.scheduled_at,
           status: a.status,
           parent_notes: a.parent_notes,
-          created_at: a.createdAt,
+          created_at: a.created_at,
         })),
       });
     } catch (error) {
-      console.error('[Parent] Error fetching appointments:', error);
-      res.status(500).json({ error: 'Internal server error', message: 'Failed to fetch appointments' });
+      console.error("[Parent] Error fetching appointments:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to fetch appointments",
+      });
     }
-  }
+  },
 );
 
 export default router;
