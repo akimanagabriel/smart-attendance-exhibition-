@@ -1,6 +1,5 @@
 import express from "express";
 import prisma from "../config/database";
-import studentRoutes from "./student";
 const iot: express.Router = express.Router();
 
 // receive card id
